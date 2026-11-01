@@ -165,7 +165,8 @@ function featuresOf(gen, events) {
 const SCRUBBERS = [
   // 私有域名必须在通用 URL 规则之前，否则只会改掉带 scheme 的那部分。
   [/[A-Za-z0-9.-]*user/gi, 'example.internal'],
-  [/\bhttps?:\/\/[^\s/"'`<>)\]]+/gi, 'https://example.com'],
+  // 整条 URL 都换掉：路径和 query 里同样可能有用户名、签名参数。
+  [/\b(?:https?|wss?|ftp|smb):\/\/[^\s"'`<>)\]]+/gi, 'https://example.com'],
   // Windows 绝对路径，含 JSON 字符串里被转义成 \\ 的形式（tool/call 的 arguments 就是 JSON 字符串）。
   [/\b[A-Za-z]:(?:\\{1,4}|\/)(?:[^\s"'`<>|*?\\/\r\n]+(?:\\{1,4}|\/)?)*/g, (m) => workspacePath(m)],
   // UNC 路径
