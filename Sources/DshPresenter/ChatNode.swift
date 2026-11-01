@@ -1,0 +1,191 @@
+import DshSession
+
+/// 正文里的一行（或一组）。
+///
+/// 节点种类与**真实数据分布**对齐，而不是照抄 web 端的 19 种。依据是本机 326 个会话 /
+/// 523,473 条事件的统计（见 `docs/UI-DESIGN-FROM-DATA.md`）：
+///
+/// - `reasoning-chunks` 占全部事件的 44.3%、正文体积的 28.9% → `.reasoning` 是第一等公民；
+/// - `tool/call` + `tool/result` 占 18.3%、体积 49.6% → `.tool` 默认收起；
+/// - `assistant` 正文只占体积的 1.8%，但那是用户唯一真正要读的东西 → 永不收起；
+/// - `user/message` 里只有 28.9% 是真人写的 → `.user` 走白名单。
+public enum ChatNode: Sendable, Equatable {
+
+    /// 真人发言。**只有** `source.kind ∈ {user, user-question-reply}` 才算。
+    ///
+    /// 实测 71% 的 `user/message` 是注入（skill-catalog / agent-instructions /
+    /// runtime-context / subagent-settled / tool-jobs / team-message …共 18 种）。
+    /// 必须白名单渲染，黑名单会漏——本样本里会多出 2,466 条假用户气泡。
+    case user(UserNode)
+
+    /// 思考过程。默认收起成一行摘要，展开才渲染全文。
+    ///
+    /// 这是性能主路径：44.3% 的事件都走这里。流式期间只更新"字数/秒数"，
+    /// 不逐 token 重排版面。
+    case reasoning(ReasoningNode)
+
+    /// 一次工具调用及其结果。默认收起。
+    case tool(ToolNode)
+
+    /// 助手正文。Markdown 渲染，不收起。
+    case assistant(AssistantNode)
+
+    /// 连续工具折叠成的过程组（"读取 3 个文件、搜索 2 次"）。
+    case processGroup(ProcessGroupNode)
+
+    /// 轮次尾：用量、耗时、上下文占用。
+    case turnTail(TurnTailNode)
+
+    /// 排队中的下一步/下一轮输入。来自 `agent/inbox/spliced`。
+    ///
+    /// 实测 4,585 次，**比真人发言(1,005)还多**，不是罕见事件。默认收起显示一行摘要。
+    case inbox(InboxNode)
+
+    /// 认不出来的东西。永不崩，显示最小可读形式。
+    ///
+    /// 必要性：事件词表随插件漂移（三方样本分别是 54 / 47 / 39 种），
+    /// 所以"未知"是常态而非异常。
+    case unknown(UnknownNode)
+}
+
+public struct UserNode: Sendable, Equatable {
+    public var seq: EventSeq
+    public var text: String
+    public init(seq: EventSeq, text: String) {
+        self.seq = seq
+        self.text = text
+    }
+}
+
+public struct ReasoningNode: Sendable, Equatable {
+    public var seq: EventSeq
+    /// 累加后的全文。收起态不读它。
+    public var text: String
+    /// 收起态显示的字数。用字素簇计数，不用 UTF-16 offset。
+    public var characterCount: Int
+    /// 思考耗时（秒）。流式期间持续增长。
+    public var duration: Double
+    /// 是否还在流式增长中。
+    public var isStreaming: Bool
+
+    public init(
+        seq: EventSeq,
+        text: String,
+        characterCount: Int,
+        duration: Double,
+        isStreaming: Bool
+    ) {
+        self.seq = seq
+        self.text = text
+        self.characterCount = characterCount
+        self.duration = duration
+        self.isStreaming = isStreaming
+    }
+}
+
+public struct ToolNode: Sendable, Equatable {
+    public var seq: EventSeq
+    /// 线上的工具名，原样保留（可能是 `mcp__foo__bar` 这种）。
+    public var name: String
+    /// 原始 arguments 字符串。实测 p50=386、p99=7,835、max=76,093 字符。
+    public var arguments: String
+    /// 结果文本。实测 p50=421、p99=27,437、max=128,705 字符。
+    /// 超过 8 KB 的部分不进 cell，走"查看全文"。
+    public var resultText: String?
+    /// 结果是否是错误。
+    public var isError: Bool
+    /// 卡片降级档位。
+    public var tier: ToolCardTier
+
+    public init(
+        seq: EventSeq,
+        name: String,
+        arguments: String,
+        resultText: String?,
+        isError: Bool,
+        tier: ToolCardTier
+    ) {
+        self.seq = seq
+        self.name = name
+        self.arguments = arguments
+        self.resultText = resultText
+        self.isError = isError
+        self.tier = tier
+    }
+}
+
+/// 工具卡的三级降级。
+///
+/// 实测前 5 个工具（pwsh 53.9% / read 13.1% / edit 10.6% / write 7.8% / grep 4.3%）
+/// 占全部调用的 **88.1%**，长尾有 55 种（含全部 MCP 与 dev_* 工具）。
+/// 所以 L1 只做那 5 个就够，不必照抄 web 端的 12 类。
+public enum ToolCardTier: Sendable, Equatable {
+    /// 专用卡：终端 / 读取 / 编辑 diff / 搜索。覆盖 88.1%。
+    case specialized
+    /// 通用卡：工具名 + 参数摘要 + 结果纯文本 + 可展开 JSON。覆盖剩余 11.9%。
+    case generic
+    /// 兜底：参数非法或结果不可解析时，原样等宽显示。
+    case raw
+}
+
+public struct AssistantNode: Sendable, Equatable {
+    public var seq: EventSeq
+    public var markdown: String
+    public var isStreaming: Bool
+    public init(seq: EventSeq, markdown: String, isStreaming: Bool) {
+        self.seq = seq
+        self.markdown = markdown
+        self.isStreaming = isStreaming
+    }
+}
+
+public struct ProcessGroupNode: Sendable, Equatable {
+    public var seq: EventSeq
+    /// 组摘要，如"读取 3 个文件、搜索 2 次"。
+    public var summary: String
+    /// 组内的工具节点。展开时显示。
+    public var children: [ToolNode]
+    public init(seq: EventSeq, summary: String, children: [ToolNode]) {
+        self.seq = seq
+        self.summary = summary
+        self.children = children
+    }
+}
+
+public struct TurnTailNode: Sendable, Equatable {
+    public var seq: EventSeq
+    public var inputTokens: Int?
+    public var outputTokens: Int?
+    public var elapsed: Double?
+    public init(seq: EventSeq, inputTokens: Int?, outputTokens: Int?, elapsed: Double?) {
+        self.seq = seq
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.elapsed = elapsed
+    }
+}
+
+public struct InboxNode: Sendable, Equatable {
+    public enum Kind: Sendable, Equatable {
+        case nextStep
+        case nextTurn
+    }
+    public var seq: EventSeq
+    public var kind: Kind
+    public var summary: String
+    public init(seq: EventSeq, kind: Kind, summary: String) {
+        self.seq = seq
+        self.kind = kind
+        self.summary = summary
+    }
+}
+
+public struct UnknownNode: Sendable, Equatable {
+    public var seq: EventSeq
+    /// 原始事件类型，照原样显示，便于排查。
+    public var type: String
+    public init(seq: EventSeq, type: String) {
+        self.seq = seq
+        self.type = type
+    }
+}

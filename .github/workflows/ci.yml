@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # 核心模块不依赖 UIKit，所以在 Linux 上就能跑完全部测试——比排队等 macOS runner 快得多。
+  # 这也是一道架构闸门：哪天有人在 DshProtocol/DshSession/DshPresenter 里 import UIKit，
+  # 这个 job 会立刻变红。
+  test-linux:
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift build
+        run: swift build
+      - name: swift test
+        run: swift test
+
+  # 协议常量与实际 host 包对拍。上游升级后最先断的就是这里，而且运行时不会报错。
+  wire-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: 安装 host 包
+        run: npm install -g @deepseek-ai/dsh
+      - name: 对拍线协议常量
+        run: |
+          node Tools/check-wire-drift.mjs
+          status=$?
+          # 2 = 找不到 host 包，视为 skip；1 = 真漂移，必须红
+          if [ $status -eq 2 ]; then
+            echo "::warning::找不到 host 包，跳过对拍"
+            exit 0
+          fi
+          exit $status
+
+  # iOS 构建只验证能编过，不跑测试（测试已经在 Linux 上跑完了）。
+  build-ios:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: 选 Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app || sudo xcode-select -s /Applications/Xcode_15.4.app
+      - name: 为 iOS 构建三个核心模块
+        run: |
+          xcodebuild build \
+            -scheme dsh-swift-Package \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            | tail -40
