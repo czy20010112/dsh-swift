@@ -202,3 +202,28 @@ p50 = 1、p90 = 2、p99 = 3。**根本没有"一串工具"**。
   新一轮从 1 重新开始时另起节点；
 - **斜杠命令的 run 和 done 按 commandId 合成一个节点**；run 不在窗口里时，
   只有结果的节点也要显示。
+
+---
+
+## App 外壳与 IPA 流水线（已落地）
+
+- **工程**：`project.yml`（XcodeGen）生成 `DshApp.xcodeproj`，工程文件不入库。
+  target `DshApp`，bundle id `io.github.dshswift.app`，部署目标 iOS 15.0，SwiftUI 生命周期，
+  显示名 `dsh`。通过根目录的本地包依赖三个核心库；界面代码只在 `App/` 下，`Sources/` 不碰 UIKit/SwiftUI。
+- **界面**：占位。`NavigationView`（iOS 15 没有 `NavigationStack`）里列出每个核心库的一个
+  常量（转发事件 28 / 需答复事件 2 / surface 事件类型 5 / 已建模事件数），真机上能看到
+  就说明三个库都链接进来了。"连接"按钮还没接配对流程。
+- **Info.plist**：`NSLocalNetworkUsageDescription`，ATS 只开 `NSAllowsLocalNetworking`
+  （局域网 host 是 http），没开 `NSAllowsArbitraryLoads`。
+- **流水线**：`.github/workflows/build-ipa.yml`，push 到 main 或手动触发。macos-14，
+  `CODE_SIGNING_ALLOWED=NO` 编译 → ad-hoc 签名 → `dsh-swift-<short-sha>-unsigned.ipa`，
+  artifact 保留 14 天。首次运行：Xcode 16.2 / iPhoneOS 18.2 SDK，IPA 262 KB，
+  主二进制 arm64、`minos 15.0`，只链接系统库（三个核心库是静态链进去的）。
+- **签名**：做 ad-hoc 签名（`codesign -s -`），不带 entitlements。只关签名编出来的包里
+  没有 `_CodeSignature`，参考流水线在这台设备上验证过的是 ad-hoc 签过的包，所以保持同一形态。
+  占位 App 不用任何需要 entitlements 的能力，也没有嵌入 framework，所以不需要参考流水线那种逐层签名。
+  以后要用 Keychain 存凭证时再评估是否要补 entitlements。
+- **还没做**：真机安装验收（走 ios-mcp）。
+
+构建过程中发现的两条静默失败见 PITFALLS 第 35、36 条，其中第 36 条说明 `ci.yml`
+的 build-ios 编译失败时不会变红，这次没改它。

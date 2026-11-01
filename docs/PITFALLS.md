@@ -348,3 +348,31 @@ llm/retry-started → assistant/attempt → …`。
 后来换成 RFC 5737 的文档地址（`192.0.2.10`）和 `dsh.example.com`，金标重算。
 
 **判据**：提交前 grep 一遍内网段、用户名、真实域名。
+
+---
+
+## 构建与打包（App 外壳 / IPA 流水线）
+
+### 35. `xcode-select A || xcode-select B` 会悄悄落到 B 上
+
+`ci.yml` 的 build-ios 写的是 `xcode-select -s Xcode_16.app || ... Xcode_15.4.app`。
+macos-14 镜像上**没有** `Xcode_16.app` 这个名字（只有 `Xcode_16.2.app` 这类带小版本的），
+所以第一句报 `invalid developer directory`，`||` 接住，job 照样绿。
+实际一直用的是 **Xcode 15.4 / iOS 17.5 SDK**，不是注释里以为的 16。
+
+**判据**：看 job 日志里的 `xcodebuild -version` 或链接命令里的 `iPhoneOS*.sdk`，
+别看 yml 里写了什么。`build-ipa.yml` 按候选列表逐个 `[ -d ]` 判断再选，选完打印版本；
+2026-11 实测 macos-14 选中的是 **Xcode 16.2（iPhoneOS 18.2 SDK）**，列表里的 16.4 不存在。
+
+### 36. `xcodebuild ... | tail -N` 编译失败也是绿的
+
+没写 `shell:` 时，GitHub Actions 用的是 `bash -e {0}`（日志里能看到），**没有 pipefail**。
+管道的退出码是最后一个命令 `tail` 的，永远是 0，所以 `xcodebuild` 报 `BUILD FAILED`
+这一步也算成功。`ci.yml` 的 build-ios 目前就是这个写法，后面没有别的步骤兜底，
+真编不过时它不会变红。
+
+`build-ipa.yml` 在这一步前面加了 `set -o pipefail`；而且打包步骤会去找 `.app`
+并用 `lipo` 检查 arm64，就算编译失败被吞掉，这一步也会失败。
+
+**判据**：凡是 `xcodebuild | tail`、`| xcpretty` 的步骤，要么 `set -o pipefail`，
+要么显式写 `shell: bash`（这时默认带 `-eo pipefail`）。

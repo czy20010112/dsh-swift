@@ -18,6 +18,8 @@ DeepSeek Harness 的原生 iOS 客户端。手机连上一台跑着 `dsh web` �
 
 渲染层（`DshRender` / `DshShell`）还没开始，而且**刻意不放进这个 SwiftPM 包** —— 见下。
 
+**拿 IPA**：每次推到 main，`Build IPA` workflow 会产出 `dsh-swift-<short-sha>-unsigned.ipa`（Actions 页面该次运行的 Artifacts，保留 14 天；或 `gh run download <run-id> -n dsh-swift-ipa`）。包已做 ad-hoc 签名，面向装了 AppSync 一类机制的越狱设备。
+
 ---
 
 ## 一条架构边界：核心三层不碰 UIKit
