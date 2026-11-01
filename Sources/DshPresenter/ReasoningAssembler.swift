@@ -91,21 +91,13 @@ public struct ReasoningAssembler: Sendable {
         return "思考 \(Self.formatDuration(node.duration)) · \(characters) 字"
     }
 
-    /// 字数的紧凑写法。思考动辄几千字，所以上千要缩写。
+    /// 字数的紧凑写法。见 `TextSummary.compactCount`。
     static func formatCount(_ count: Int) -> String {
-        if count < 1000 { return String(count) }
-        let thousands = Double(count) / 1000.0
-        // 10k 以上不显示小数位，否则一行里数字太长
-        if thousands >= 10 { return String(Int(thousands.rounded())) + "k" }
-        return String(format: "%.1fk", thousands)
+        TextSummary.compactCount(count)
     }
 
-    /// 耗时的紧凑写法。
+    /// 耗时的紧凑写法。见 `TextSummary.compactDuration`。
     static func formatDuration(_ seconds: Double) -> String {
-        if seconds < 60 { return String(format: "%.1f 秒", seconds) }
-        let minutes = Int(seconds) / 60
-        let remainder = Int(seconds) % 60
-        if remainder == 0 { return "\(minutes) 分" }
-        return "\(minutes) 分 \(remainder) 秒"
+        TextSummary.compactDuration(seconds)
     }
 }

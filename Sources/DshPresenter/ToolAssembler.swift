@@ -169,16 +169,9 @@ public struct ToolAssembler: Sendable {
         }
     }
 
-    /// 按字素簇截断，超出加省略号。
+    /// 按字素簇截断，超出加省略号。见 `TextSummary.oneLine`。
     static func truncate(_ text: String, to limit: Int) -> String {
-        // 先把换行压成空格：摘要是一行，保留换行会让它看起来像空的
-        let flattened = text
-            .replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-            .trimmingCharacters(in: .whitespaces)
-        guard flattened.count > limit else { return flattened }
-        return String(flattened.prefix(limit)) + "…"
+        TextSummary.oneLine(text, limit: limit)
     }
 
     /// 结果的收起态摘要：行数 + 首行。
