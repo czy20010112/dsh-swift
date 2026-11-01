@@ -241,6 +241,73 @@ pin 在 `3f6384c7`（2026-08-23 / v2.0.0-95），origin/master 已到
 
 **判据**：`cd deps/ish && git log --oneline -1 && git describe --tags`
 
+## 回放真实会话发现的（15 个夹具 / 覆盖全部 53 种事件）
+
+### 24. 会话格式有三代，不是两代
+
+本机 357 个文件：v0 58 个、v3 31 个、v4 268 个。旧代 header 带 `version: 0`，
+并非没有 version 字段。v3 的流分片像 v4 一样嵌在 `data.stream` 里，但
+tool/result 的结构像 v0。
+
+另有 9 个会话目录同时放着多代文件（id 相同），v4 文件的 seq 从 0 重新开始，
+是迁移留下的副本。读会话时要挑最新一代，不能两份都读。
+
+### 25. 只有 v4 有 `message.toolCallId`
+
+v0 和 v3 只能从 `message.source.callId` 取配对 id，文本还多套一层 `tool-result` 块。
+只认 `toolCallId` 的话，v0 和 v3 的 tool/result **全部**配不上，工具卡永远显示"运行中"。
+
+### 26. v0 的 `surfaceOp.replace` 用 `start`/`end`
+
+v3 和 v4 用 `startSeq`/`endSeq`。另外 `surfaceOp: "append"` 是字符串值，
+全库约 9.6 万次，是最常见的形式。解码时两种都要认。
+
+### 27. 有一类 replace 会删掉一大段各种类型的事件
+
+来源是 `user/message`：v4 里 `source.kind=compact-checkpoint` 的有 35 次，
+v0/v3 里 `plugin` 的有 19 次。区间最大跨 **1,298 个 seq**，里面混着 tool/call、
+assistant/message 等各种事件。
+
+`SessionWindow.replace` 照字面执行会把整段历史删掉。这不是"重写一条消息"，
+而是压缩边界，装配器要单独处理。**尚未处理**。
+
+其余 replace 都是单个 seq 的同类型替换。一个 call 对应多个 result 时，
+第二个 result 一定带 replace（v0 5 次、v3 26 次、v4 84 次）。
+
+### 28. v3 会话丢过事件
+
+31 个 v3 文件里 13 个有 seq 断档，共缺 852 个 seq，都不在 compaction 的
+shadowedSeqs 里。12 个文件出现孤儿 tool/result（共 33 个），它们的
+`sourceEventSeqs` 正好指向断档。另有 39 个 tool/call 没有结果。v0 和 v4 没有这个问题。
+
+客户端必须容忍配不上的 call 和 result，不能假设一一对应。
+
+### 29. v0 的一条 run 占 n 个 seq
+
+它占用 `seq0 ..< seq0+n`，下一条事件的 seq 正好是 `seq0+n`，9,061 处无一例外。
+所以 v0 run 之后的 durable cursor 应取 `seq0+n-1`。`retireLiveChunks(upTo:)`
+只清 `(N-1, N)` 区间，遇到 v3 的断档会让 live 分片滞留（`v3-02` 滞留了 6 条）。
+这是窗口的问题还是协议约定，**待读 host 源码确认**。
+
+### 30. v4 里有负的 dt
+
+9 个，最小 -1462 ms，其中 7 个在 tool-call 分片里。`AssistantStream.duration`
+会把它们减掉，耗时偏小。**尚未处理**：应该按 0 计。
+
+### 31. 落盘数据里没有小数 seq
+
+小数 seq 只出现在实时连接里。回放测试里的 live 分片是按
+`cursor + 1 - 1/(n+1)` 现场合成的，不是从夹具读的。
+
+### 32. 夹具脱敏要在拼接后的文本上做
+
+流式分片会把一个 IP 或路径切成两半，逐片匹配认不出来。第一次推送的夹具因此
+漏了一个公网 IP（8 处）和若干 `/mnt/d/...` 路径。现在 `Tools/export-fixtures.mjs`
+先拼接整条 run 再匹配，替换后再拆回原分片，分片数和 dt 关系保持不变。
+
+另一个教训：脱敏脚本本身在公开仓库里，**不能把"要过滤的私人标识"写成字面值**。
+现在它们从环境变量 `DSH_FIXTURE_PRIVATE_DOMAINS` / `DSH_FIXTURE_PRIVATE_TERMS` 读。
+
 ### 23. 不要在公开仓库里放内部文档
 
 评审稿和 UI 设计文档里有内网地址、工时估算、对私有仓库的逆向细节。
