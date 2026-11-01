@@ -13,7 +13,8 @@
 
 import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join, dirname } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, hostname, userInfo } from 'node:os'
+import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import zlib from 'node:zlib'
@@ -171,10 +172,11 @@ const SCRUBBERS = [
   [/\b[A-Za-z]:(?:\\{1,4}|\/)(?:[^\s"'`<>|*?\\/\r\n]+(?:\\{1,4}|\/)?)*/g, (m) => workspacePath(m)],
   // UNC 路径
   [/\\{2,8}[A-Za-z0-9._-]+(?:\\{1,4}[^\s"'`<>|*?\\\r\n]+)+/g, (m) => workspacePath(m)],
-  // Git Bash / MSYS 的 /c/... /d/... 路径
-  [/(?<![\w.~-])\/[a-z]\/(?:[^\s"'`<>|*?\\/\r\n]+\/?)+/g, (m) => workspacePath(m)],
-  // 类 Unix 主目录
-  [/(?<![\w.~-])\/(?:home|Users|root)\/(?:[^\s"'`<>|*?\\/\r\n]+\/?)*/g, (m) => workspacePath(m)],
+  // 类 Unix 主目录（单段也算，/home/<name> 本身就是用户名）
+  [/(?<![\w.~:/-])\/(?:home|Users|root)\/[^\s"'`<>|*?\\/\r\n]+(?:\/[^\s"'`<>|*?\\/\r\n]*)*/g, (m) => workspacePath(m)],
+  // 其余任何两段以上的绝对路径：/mnt/d/...、Git Bash 的 /d/...、/opt/... 都走这里。
+  // 只认 "/" 开头且前面不是单词字符，所以 tool/call 这种事件类型和 1/2 这种分数不会被误伤。
+  [/(?<![\w.~:/-])\/(?!workspace\/)[^\s"'`<>|*?\\/\r\n]+(?:\/[^\s"'`<>|*?\\/\r\n]*)+/g, (m) => workspacePath(m)],
   [/[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, 'user@example.com'],
   // 私网和公网 IP 一律替换：VPS 的公网 IP 和内网 IP 同样敏感。回环地址留着，它对理解日志有用。
   [/\b(?!127\.0\.0\.1\b)(?!0\.0\.0\.0\b)(?:\d{1,3}\.){3}\d{1,3}\b/g, '203.0.113.1'],
@@ -194,9 +196,36 @@ const SCRUBBERS = [
   // 用户名、主机名、真名拼音、GitHub 账号。任何含 czy 的词都整体替换。
   [/[A-Za-z0-9._-]*czy[A-Za-z0-9._-]*/gi, 'user'],
   [/[A-Za-z0-9._-]*user[A-Za-z0-9._-]*/gi, 'user'],
+  // 本机身份（OS 用户名、主机名、git 身份）动态取，换一台机器跑也不会漏。
+  ...localIdentities().map((id) => [new RegExp(`[A-Za-z0-9._-]*${escapeRegExp(id)}[A-Za-z0-9._-]*`, 'gi'), 'user']),
   // 兜底：长串高熵 token（base64/hex）。不含 '-'，避免误杀 UUID 和 callId。
   [/[A-Za-z0-9+/_]{40,}={0,2}/g, '[redacted-token]'],
 ]
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function localIdentities() {
+  const ids = new Set()
+  const add = (s) => {
+    // 太短的串（如 "pc"）当关键词会把正常文本删得面目全非。
+    if (s && s.trim().length >= 4) ids.add(s.trim())
+  }
+  try {
+    add(userInfo().username)
+  } catch {}
+  add(hostname())
+  for (const key of ['user.name', 'user.email']) {
+    try {
+      const v = execSync(`git config --global ${key}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+      add(v)
+      // 邮箱的 local part 往往就是 QQ 号之类的个人编号，单独出现也要删。
+      if (key === 'user.email') add(v.split('@')[0])
+    } catch {}
+  }
+  return [...ids]
+}
 
 function workspacePath(raw) {
   // 只留最后一段，目录层级本身就可能泄露用户名和项目结构。

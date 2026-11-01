@@ -30,9 +30,6 @@ public enum ChatNode: Sendable, Equatable {
     /// 助手正文。Markdown 渲染，不收起。
     case assistant(AssistantNode)
 
-    /// 连续工具折叠成的过程组（"读取 3 个文件、搜索 2 次"）。
-    case processGroup(ProcessGroupNode)
-
     /// 轮次尾：用量、耗时、上下文占用。
     case turnTail(TurnTailNode)
 
@@ -40,6 +37,14 @@ public enum ChatNode: Sendable, Equatable {
     ///
     /// 实测 4,585 次，**比真人发言(1,005)还多**，不是罕见事件。默认收起显示一行摘要。
     case inbox(InboxNode)
+
+    // 这里刻意**没有**"过程组"节点。设计文档把"连续工具折叠成一个过程区"
+    // 当成必做项，但实测 39,847 个连续工具段里 81.3% 只有 1 个调用、
+    // p99 是 3 个、最长 8 个——根本没有"一串工具"可折叠。
+    //
+    // 原因在打断分布上：`assistant/message` 占全部分组打断的 97.8%，
+    // agent 的节奏是"说一句 → 调一个工具 → 再说一句"。
+    // 把 2 个调用折叠成「读取 2 个文件」只是多一次点击。
 
     /// 认不出来的东西。永不崩，显示最小可读形式。
     ///
@@ -136,19 +141,6 @@ public struct AssistantNode: Sendable, Equatable {
         self.seq = seq
         self.markdown = markdown
         self.isStreaming = isStreaming
-    }
-}
-
-public struct ProcessGroupNode: Sendable, Equatable {
-    public var seq: EventSeq
-    /// 组摘要，如"读取 3 个文件、搜索 2 次"。
-    public var summary: String
-    /// 组内的工具节点。展开时显示。
-    public var children: [ToolNode]
-    public init(seq: EventSeq, summary: String, children: [ToolNode]) {
-        self.seq = seq
-        self.summary = summary
-        self.children = children
     }
 }
 
