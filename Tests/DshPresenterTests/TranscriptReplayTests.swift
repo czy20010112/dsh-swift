@@ -227,6 +227,9 @@ final class TranscriptReplayTests: XCTestCase {
         case .inbox: return "inbox"
         case .compaction: return "compaction"
         case .retry: return "retry"
+        case .command: return "command"
+        case .todo: return "todo"
+        case .deliverables: return "deliverables"
         case .unknown: return "unknown"
         }
     }

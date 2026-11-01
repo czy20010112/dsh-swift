@@ -54,7 +54,8 @@ public enum EventClassifier {
         // start/end/prune/summary 各出一个节点的话，一次压缩会在正文里留下四五行。
         "compaction/start": .structure,       // 319
         "compaction/end": .structure,         // 319
-        "system/message": .node,              // 281
+        // 给模型的指令。正文不显示（轨迹视图里看）
+        "system/message": .ignorable,         // 281
         "llm/retry": .node,                   // 260 — 带失败原因，用户要知道为什么卡住
         // retry-started 只是 retry 的回声（总是紧跟在它后面，实测 259 对 260）。
         // 当成节点会插在两次 retry 之间，打断"连续重试只留最新一条"的合并。
@@ -65,9 +66,10 @@ public enum EventClassifier {
         "compaction/summary": .structure,     // 41
         "command/run": .node,                 // 42 — 斜杠命令
         "command/done": .node,                // 42
-        "goal/change": .node,                 // 26
-        "developer/message": .node,           // 20
-        "plan/mode": .node,                   // 8
+        // 目标和计划模式是会话状态，放在会话头，不在正文里插一行
+        "goal/change": .headerStatus,         // 26
+        "developer/message": .ignorable,      // 20
+        "plan/mode": .headerStatus,           // 8
 
         // --- 会话头状态行 ---
         "permission/preset": .headerStatus,   // 350

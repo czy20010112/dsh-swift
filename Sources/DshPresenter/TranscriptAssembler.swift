@@ -54,6 +54,8 @@ public struct TranscriptAssembler: Sendable {
 
         /// callId → 工具节点在 `nodes` 里的下标。结果按 callId 挂回去，不靠顺序。
         var toolIndex: [String: Int] = [:]
+        /// commandId → 命令节点下标。run 和 done 合成一个节点。
+        var commandIndex: [String: Int] = [:]
         /// 还没被 assistant/message 收走的 v0 顶层思考 run。
         ///
         /// v0 的流分片是独立的顶层行，排在它们所属的 assistant/message **之前**；
@@ -123,6 +125,29 @@ public struct TranscriptAssembler: Sendable {
 
             case .llmRetry(let retry):
                 appendRetry(retry, seq: event.seq)
+
+            case .commandRun(let id, let name, let args):
+                commandIndex[id] = nodes.count
+                nodes.append(.command(CommandNode(seq: event.seq, commandId: id, name: name, args: args)))
+
+            case .commandDone(let id, let kind, let text):
+                if let i = commandIndex[id], case .command(var node) = nodes[i] {
+                    node.outcome = kind
+                    node.outcomeText = text
+                    nodes[i] = .command(node)
+                } else {
+                    // 窗口从中间开始时 run 不在窗口里：单独出一个只有结果的节点，
+                    // 不要丢掉——结果文本本身就是用户要看的
+                    nodes.append(.command(CommandNode(
+                        seq: event.seq, commandId: id, name: "", args: nil, outcome: kind, outcomeText: text
+                    )))
+                }
+
+            case .todoWrite(let items):
+                nodes.append(.todo(TodoNode(seq: event.seq, items: items)))
+
+            case .deliverables(let files):
+                nodes.append(.deliverables(DeliverablesNode(seq: event.seq, files: files)))
 
             case .unknown(let type):
                 appendUnknown(type: type, event: event)
@@ -244,6 +269,9 @@ extension ChatNode {
         case .inbox(let n): return n.seq
         case .compaction(let n): return n.seq
         case .retry(let n): return n.seq
+        case .command(let n): return n.seq
+        case .todo(let n): return n.seq
+        case .deliverables(let n): return n.seq
         case .unknown(let n): return n.seq
         }
     }

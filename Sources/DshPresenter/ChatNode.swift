@@ -1,3 +1,4 @@
+import Foundation
 import DshSession
 
 /// 正文里的一行（或一组）。
@@ -50,6 +51,21 @@ public enum ChatNode: Sendable, Equatable {
     /// 重试期间界面上什么都不动，不显示的话用户分不清是卡住了还是在等。
     /// 实测 260 次，`TRANSPORT` 这类错误常常连续重试好几轮。
     case retry(RetryNotice)
+
+    /// 用户执行的斜杠命令（`/permission danger-full-access` 之类）及其结果。
+    ///
+    /// run 和 done 按 commandId 合成一个节点：分开显示会出现"命令"和"结果"
+    /// 两行，中间可能隔着别的事件。
+    case command(CommandNode)
+
+    /// 待办清单的当前状态。
+    ///
+    /// `todo/write` 每次都是全量。正文里只在它出现的位置显示那一刻的清单；
+    /// "最新的清单"另由渲染层放在会话头或侧栏。
+    case todo(TodoNode)
+
+    /// agent 交付的文件。
+    case deliverables(DeliverablesNode)
 
     // 这里刻意**没有**"过程组"节点。设计文档把"连续工具折叠成一个过程区"
     // 当成必做项，但实测 39,847 个连续工具段里 81.3% 只有 1 个调用、
@@ -199,5 +215,56 @@ public struct CompactionNode: Sendable, Equatable {
     public var seq: EventSeq
     public init(seq: EventSeq) {
         self.seq = seq
+    }
+}
+
+public struct CommandNode: Sendable, Equatable {
+    public var seq: EventSeq
+    public var commandId: String
+    public var name: String
+    public var args: String?
+    /// `success` / `error` 等。还没完成时为 nil。
+    public var outcome: String?
+    public var outcomeText: String?
+
+    public init(seq: EventSeq, commandId: String, name: String, args: String?,
+                outcome: String? = nil, outcomeText: String? = nil) {
+        self.seq = seq
+        self.commandId = commandId
+        self.name = name
+        self.args = args
+        self.outcome = outcome
+        self.outcomeText = outcomeText
+    }
+
+    /// 一行显示：`/permission danger-full-access`。
+    /// args 在线上带前导空格（实测 `" danger-full-access"`），要去掉再拼。
+    public var displayLine: String {
+        let trimmed = args?.trimmingCharacters(in: .whitespaces) ?? ""
+        return trimmed.isEmpty ? "/\(name)" : "/\(name) \(trimmed)"
+    }
+}
+
+public struct TodoNode: Sendable, Equatable {
+    public var seq: EventSeq
+    public var items: [DshSession.TodoItem]
+    public init(seq: EventSeq, items: [DshSession.TodoItem]) {
+        self.seq = seq
+        self.items = items
+    }
+
+    /// 收起态：`待办 2/7`（已完成/总数）。
+    public var summary: String {
+        let done = items.filter { $0.status == "completed" }.count
+        return "待办 \(done)/\(items.count)"
+    }
+}
+
+public struct DeliverablesNode: Sendable, Equatable {
+    public var seq: EventSeq
+    public var files: [DshSession.DeliverableFile]
+    public init(seq: EventSeq, files: [DshSession.DeliverableFile]) {
+        self.seq = seq
+        self.files = files
     }
 }

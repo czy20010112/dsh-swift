@@ -113,6 +113,14 @@ public enum EventPayload: Sendable, Equatable {
     case inboxSplice(InboxSpliceEvent)
     /// `llm/retry`：一次 LLM 调用失败、即将重试。
     case llmRetry(LLMRetryEvent)
+    /// `command/run`：用户执行了一条斜杠命令。和 `command/done` 按 commandId 配对。
+    case commandRun(commandId: String, name: String, args: String?)
+    /// `command/done`：斜杠命令的结果。
+    case commandDone(commandId: String, kind: String, text: String?)
+    /// `todo/write`：agent 更新了待办清单。每次都是**全量**，不是增量。
+    case todoWrite([TodoItem])
+    /// `deliverables/presented`：agent 交付了文件。
+    case deliverables([DeliverableFile])
     /// 没有建模的类型。保留类型名——它可能被 surfaceOp 或 sourceEventSeqs 引用。
     case unknown(type: String)
 }
@@ -227,6 +235,17 @@ public struct LLMRetryEvent: Sendable, Equatable {
     /// `TRANSPORT` / `RATE_LIMIT` / `TIMEOUT` / `SERVER` / `EMPTY_RESPONSE`
     public var failureCode: String?
     public var failureMessage: String?
+}
+
+public struct TodoItem: Sendable, Equatable {
+    public var content: String
+    /// `pending` / `in_progress` / `completed`。未知值原样保留。
+    public var status: String
+}
+
+public struct DeliverableFile: Sendable, Equatable {
+    public var path: String
+    public var description: String?
 }
 
 /// 单条事件解码失败的记录。
@@ -406,6 +425,18 @@ extension SessionEvent: Decodable {
             payload = .inboxSplice(try c.decode(InboxSpliceDTO.self, forKey: .data).event)
         case "llm/retry":
             payload = .llmRetry(try c.decode(LLMRetryDTO.self, forKey: .data).event)
+        case "command/run":
+            let dto = try c.decode(CommandDTO.self, forKey: .data)
+            payload = .commandRun(commandId: dto.commandId, name: dto.name ?? "", args: dto.args)
+        case "command/done":
+            let dto = try c.decode(CommandDTO.self, forKey: .data)
+            payload = .commandDone(commandId: dto.commandId, kind: dto.kind ?? "success", text: dto.text)
+        case "todo/write":
+            let dto = try c.decode(TodoDTO.self, forKey: .data)
+            payload = .todoWrite(dto.todos.map { TodoItem(content: $0.content ?? "", status: $0.status ?? "pending") })
+        case "deliverables/presented":
+            let dto = try c.decode(DeliverablesDTO.self, forKey: .data)
+            payload = .deliverables(dto.files.map { DeliverableFile(path: $0.path, description: $0.description) })
         default:
             // 不读 data：未知类型的结构不受我们控制，读它只会制造解码失败。
             payload = .unknown(type: type)
@@ -661,6 +692,30 @@ private struct LLMRetryDTO: Decodable {
             failureMessage: failure?.message
         )
     }
+}
+
+private struct CommandDTO: Decodable {
+    var commandId: String
+    var name: String?
+    var args: String?
+    var kind: String?
+    var text: String?
+}
+
+private struct TodoDTO: Decodable {
+    struct Item: Decodable {
+        var content: String?
+        var status: String?
+    }
+    var todos: [Item]
+}
+
+private struct DeliverablesDTO: Decodable {
+    struct File: Decodable {
+        var path: String
+        var description: String?
+    }
+    var files: [File]
 }
 
 private struct TurnDTO: Decodable {
