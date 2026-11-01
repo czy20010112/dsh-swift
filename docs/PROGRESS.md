@@ -4,7 +4,7 @@
 
 ## 当前状态（2026-11-01）
 
-184 个测试，全绿。CI 三个 job 全通（Linux 测试 / 协议漂移 / iOS 构建）。
+212 个测试，全绿。CI 三个 job 全通（Linux 测试 / 协议漂移 / iOS 构建）。
 
 | 模块 | 已完成 | 测试数 |
 |---|---|---|
@@ -154,15 +154,16 @@ p50 = 1、p90 = 2、p99 = 3。**根本没有"一串工具"**。
 - `Sources/DshSession/EventDecoder.swift`：三代格式都能解，未知类型降级为 `.unknown`。
 - `Tests/DshSessionTests/ReplayTests.swift`：11 个回放测试，解码 0 失败。
 
-回放发现的格式问题见 `PITFALLS.md` 第 24–31 条。其中两条**还没处理**：
+回放发现的格式问题见 `PITFALLS.md` 第 24–31 条。原先两条未处理的已经修掉：
 
-1. `compact-checkpoint` 触发的大范围 replace（第 27 条）——照现在的窗口实现会删掉整段历史；
-2. 负 dt（第 30 条）——思考耗时会偏小。
+1. **replace 抹掉历史**（第 9、27 条）：根因是把 replace 理解成"删区间"。按 host web
+   客户端的语义改为 surface/transcript 分离——replace 只遮蔽模型上下文，对话记录不动。
+   真实夹具上验证了正文事件集合不被任何 replace 改动；
+2. **负 dt**（第 30 条）：钳到 0。
 
 ---
 
 ## 下一步
 
-1. 修上面两条未处理的问题。第 27 条优先，它会让压缩后的会话丢内容。
-2. 把装配器串起来：从 `EventDecoder` 的输出一路到 `[ChatNode]`，用 15 个夹具做端到端回放。
-3. 然后才是渲染层和真机验收（iPhone 13 / iOS 15.3.1，走 ios-mcp）。
+1. 把装配器串起来：从 `EventDecoder` 的输出一路到 `[ChatNode]`，用 15 个夹具做端到端回放。
+2. 然后才是渲染层和真机验收（iPhone 13 / iOS 15.3.1，走 ios-mcp）。

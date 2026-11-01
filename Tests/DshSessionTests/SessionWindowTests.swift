@@ -26,36 +26,37 @@ final class SessionWindowTests: XCTestCase {
         XCTAssertEqual(window.records[0].type, "tool/result")
     }
 
-    /// `surfaceOp.replace` 的核心语义：先删区间，再插新记录。
+    /// `surfaceOp.replace` 遮蔽的是**模型上下文**，不是对话记录。
     ///
-    /// 如果实现成"先插后删"，新记录会被自己的删除区间吃掉（当它的 seq 落在区间内时），
-    /// 或者留下旧记录造成重复。
-    func testReplaceRemovesRangeThenInserts() {
-        var window = SessionWindow(records: [
-            rec(1), rec(2), rec(3), rec(4), rec(5),
-        ])
-        // 用一条 seq=2 的新记录替换 [2,4]
-        window.replace(startSeq: 2, endSeq: 4, with: rec(2, "assistant/message-rewritten"))
+    /// 窗口必须把被遮蔽的记录原样留着。早期实现"先删区间再插入"，回放真实会话
+    /// 时一次压缩就抹掉了 1,298 个 seq 的历史——用户看过的内容从界面上消失。
+    func testShadowedDoesNotRemoveRecords() {
+        let window = SessionWindow(records: [rec(1), rec(2), rec(3), rec(4), rec(5)])
+        let shadowed = window.shadowed(startSeq: 2, endSeq: 4)
 
-        XCTAssertEqual(window.records.map(\.seq), [1, 2, 5])
-        XCTAssertEqual(window.records[1].type, "assistant/message-rewritten")
+        XCTAssertEqual(shadowed, [2, 3, 4])
+        XCTAssertEqual(window.records.map(\.seq), [1, 2, 3, 4, 5], "遮蔽不能删掉对话记录")
     }
 
-    /// 替换区间是**闭区间**，两个端点都要删掉。
-    func testReplaceRangeIsInclusive() {
-        var window = SessionWindow(records: [rec(1), rec(2), rec(3)])
-        window.replace(startSeq: 1, endSeq: 3, with: rec(1, "replacement"))
-        XCTAssertEqual(window.records.count, 1)
-        XCTAssertEqual(window.records[0].type, "replacement")
+    /// 遮蔽区间是闭区间，两个端点都算。
+    func testShadowedRangeIsInclusive() {
+        let window = SessionWindow(records: [rec(1), rec(2), rec(3)])
+        XCTAssertEqual(window.shadowed(startSeq: 1, endSeq: 3), [1, 2, 3])
     }
 
-    /// 替换后不能留下重复 seq——这是"同一条回复出现两次"的直接原因。
-    func testReplaceLeavesNoDuplicateSeq() {
-        var window = SessionWindow(records: [rec(1), rec(2), rec(3)])
-        window.replace(startSeq: 2, endSeq: 2, with: rec(2, "new"))
-        let seqs = window.records.map(\.seq)
-        XCTAssertEqual(seqs, Array(Set(seqs)).sorted(), "窗口里出现了重复 seq")
-        XCTAssertEqual(seqs, [1, 2, 3])
+    /// 区间里没有记录（比如端点落在分页之外）时返回空，不出错。
+    func testShadowedOutsideWindowIsEmpty() {
+        let window = SessionWindow(records: [rec(10), rec(11)])
+        XCTAssertEqual(window.shadowed(startSeq: 1, endSeq: 5), [])
+    }
+
+    /// 实测最宽的检查点替换跨 1,298 个 seq。窗口整段都要保留。
+    func testWideCheckpointRangeKeepsAllHistory() {
+        let records = (0..<1400).map { rec(EventSeq($0)) }
+        let window = SessionWindow(records: records)
+
+        XCTAssertEqual(window.shadowed(startSeq: 10, endSeq: 1307).count, 1298)
+        XCTAssertEqual(window.records.count, 1400)
     }
 
     /// live chunk 的小数 seq 必须排在对应的两个耐久事件之间。

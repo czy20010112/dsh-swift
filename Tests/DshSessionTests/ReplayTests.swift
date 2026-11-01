@@ -326,4 +326,58 @@ final class ReplayTests: XCTestCase {
         }
         print("[replay] 各代 replace 数: \(replaces.sorted { $0.key < $1.key })")
     }
+
+    // MARK: - surface 与 transcript 分离
+
+    /// 这次修复要保证的核心性质：**replace 不会让任何 append 事件从正文里消失**。
+    ///
+    /// 早期窗口按"先删区间再插入"处理 replace，回放时发现检查点一次能遮蔽上千个 seq。
+    /// 这里在真实夹具上直接验证：把所有 replace 都"执行"一遍之后，进正文的事件集合
+    /// 和"所有 append 事件 + 非 surface 事件"完全相同。
+    func testReplaceNeverRemovesTranscriptEvents() throws {
+        var checkedReplaces = 0
+        for f in try fixtures() {
+            let transcript = f.events.filter { $0.surfaceRole.entersTranscript }.map(\.seq)
+            let expected = f.events.filter { event in
+                switch event.surfaceOp {
+                case .replace?: return !SurfaceRole.surfaceEventTypes.contains(event.type)
+                default: return true
+                }
+            }.map(\.seq)
+            XCTAssertEqual(transcript, expected, "\(f.entry.file): 正文事件集合被 replace 改动了")
+
+            // 被遮蔽区间里的 append 事件必须全部还在正文里
+            for event in f.events {
+                guard case .replace(let start, let end)? = event.surfaceOp,
+                      SurfaceRole.surfaceEventTypes.contains(event.type) else { continue }
+                checkedReplaces += 1
+                let shadowedAppends = f.events.filter {
+                    $0.seq >= start && $0.seq <= end && $0.surfaceRole == .transcript
+                }
+                for shadowed in shadowedAppends {
+                    XCTAssertTrue(
+                        transcript.contains(shadowed.seq),
+                        "\(f.entry.file): seq \(shadowed.seq) 被 seq \(event.seq) 的 replace 抹掉了"
+                    )
+                }
+            }
+        }
+        XCTAssertGreaterThan(checkedReplaces, 0, "夹具里应该至少有一个 replace，否则这条测试什么都没测")
+        print("[replay] 检查了 \(checkedReplaces) 个 surface replace")
+    }
+
+    /// 检查点要被识别成 `.compactionCheckpoint` 并带上 compactionId，
+    /// 渲染层才能在那个位置放"上下文已压缩"的标记、并和 compaction/summary 关联。
+    func testCompactCheckpointsAreRecognized() throws {
+        var checkpoints = 0
+        for f in try fixtures() {
+            for event in f.events {
+                guard case .compactionCheckpoint(let id, let range) = event.surfaceRole else { continue }
+                checkpoints += 1
+                XCTAssertNotNil(id, "\(f.entry.file) seq \(event.seq): 检查点没解出 compactionId")
+                XCTAssertLessThan(range.upperBound, event.seq, "检查点遮蔽的应该是它之前的内容")
+            }
+        }
+        print("[replay] 识别出 \(checkpoints) 个压缩检查点")
+    }
 }

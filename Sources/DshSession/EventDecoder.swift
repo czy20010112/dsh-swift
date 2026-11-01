@@ -197,6 +197,9 @@ public struct ConversationMessage: Sendable, Equatable {
     public var role: String?
     /// `source.kind`。区分真人发言与注入要靠它（见 ChatNode.user 的白名单说明）。
     public var sourceKind: String?
+    /// 仅 `source.kind == compact-checkpoint`：这个检查点属于哪次压缩，
+    /// 用来和 `compaction/start|summary|end` 关联。
+    public var compactionId: String? = nil
     public var text: String
 }
 
@@ -481,6 +484,7 @@ private struct SourceDTO: Decodable {
     var kind: String?
     var callId: String?
     var model: String?
+    var compactionId: String?
 }
 
 private struct ContentBlockDTO: Decodable {
@@ -584,6 +588,7 @@ private struct MessageEnvelopeDTO: Decodable {
         message = ConversationMessage(
             role: body.role,
             sourceKind: body.source?.kind,
+            compactionId: body.source?.compactionId,
             text: (body.content ?? []).compactMap { $0.type == "text" ? $0.text : nil }.joined()
         )
     }

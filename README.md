@@ -13,7 +13,7 @@ DeepSeek Harness 的原生 iOS 客户端。手机连上一台跑着 `dsh web` �
 | 模块 | 层 | 状态 |
 |---|---|---|
 | `DshProtocol` | L1 传输：配对换发、线协议常量、RPC 信封、mux 帧、`$events` | 配对与常量镜像已落地，19 个测试绿 |
-| `DshSession` | L2 会话窗口：seq 排序、`surfaceOp.replace`、live chunk 退役 | 窗口语义已落地并有测试 |
+| `DshSession` | L2 会话窗口：seq 排序、surface/transcript 分离、live chunk 退役、三代格式解码 | 已落地，含真实会话回放 |
 | `DshPresenter` | L3 装配：事件 → `ChatNode` | 节点模型已定，装配器待写 |
 
 渲染层（`DshRender` / `DshShell`）还没开始，而且**刻意不放进这个 SwiftPM 包** —— 见下。

@@ -45,22 +45,27 @@ public struct SessionWindow: Sendable {
         }
     }
 
-    /// 处理 `surfaceOp: {op:"replace", startSeq, endSeq}`。
+    /// 求一次 `surfaceOp.replace` 在**模型上下文**里遮蔽了哪些记录。
     ///
-    /// 语义是**先删后插**：摘掉 `[startSeq, endSeq]` 闭区间里的旧记录，再插入新记录。
-    /// 顺序颠倒（先插后删）会把刚插进去的那条自己删掉，或者留下重复节点。
+    /// **这个方法不删除任何东西**，而且这是刻意的。`replace` 改写的是模型看到的
+    /// 上下文（surface），不是给人看的对话记录。host 的 web 客户端
+    /// （`dsh-client-ui-chat`，`isAppendSurfaceEvent` 的注释）把这一点写得很直白：
     ///
-    /// 实测这个 op 在 326 个会话里出现 152 次，是"重写更早消息"路径的唯一机制。
-    /// 它的症状很隐蔽：同一条回复出现两次，或者显示旧版内容——都不报错，
-    /// 所以这里必须有测试。
-    public mutating func replace(
-        startSeq: EventSeq,
-        endSeq: EventSeq,
-        with record: WindowedRecord
-    ) {
-        records.removeAll { $0.seq >= startSeq && $0.seq <= endSeq }
-        let insertAt = records.firstIndex { $0.seq > record.seq } ?? records.count
-        records.insert(record, at: insertAt)
+    /// > 面向模型的 surface 会刻意遮蔽被替换的范围，所以它不能拿来当人类可读的
+    /// > 对话记录——一次替换落地，就会抹掉用户已经看过的对话。append 来源的事件
+    /// > 才是对话记录的持久素材；替换出来的副本只给模型看。
+    ///
+    /// 早期版本按"先删区间、再插新记录"实现，回放真实会话时暴露出后果：
+    /// `compact-checkpoint` 的替换区间最宽跨 **1,298 个 seq**，压缩一次就会把
+    /// 用户看过的整段历史从界面上抹掉。
+    ///
+    /// 所以窗口只回答"哪些被遮蔽了"，供轨迹视图标注或统计用；正文照常显示它们。
+    ///
+    /// - Returns: 闭区间 `[startSeq, endSeq]` 内的记录 seq。
+    public func shadowed(startSeq: EventSeq, endSeq: EventSeq) -> [EventSeq] {
+        records
+            .filter { $0.seq >= startSeq && $0.seq <= endSeq }
+            .map(\.seq)
     }
 
     /// 耐久事件到达，把同位置的实时合成事件退役。

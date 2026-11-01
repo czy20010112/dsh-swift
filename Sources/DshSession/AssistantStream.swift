@@ -95,8 +95,8 @@ public enum AssistantStream {
         var time = run.time0
         for (offset, text) in run.texts.enumerated() {
             if offset > 0 {
-                // dt[i-1] 是第 i 个分片相对第 i-1 个的差值
-                let delta = offset - 1 < run.dt.count ? run.dt[offset - 1] : 0
+                // dt[i-1] 是第 i 个分片相对第 i-1 个的差值。负值钳到 0，见 `clampedDelta`。
+                let delta = offset - 1 < run.dt.count ? Self.clampedDelta(run.dt[offset - 1]) : 0
                 time += Int64(delta)
             }
             out.append(ExpandedChunk(index: run.index, time: time, text: text))
@@ -116,6 +116,15 @@ public enum AssistantStream {
     public static func duration(_ run: ChunkRun) -> Int {
         // 只累加真正用到的那部分 dt（texts.count - 1 个）
         let used = max(0, min(run.dt.count, run.texts.count - 1))
-        return run.dt.prefix(used).reduce(0, +)
+        return run.dt.prefix(used).reduce(0) { $0 + clampedDelta($1) }
+    }
+
+    /// 负的时间差按 0 计。
+    ///
+    /// 实测 v4 会话里有 9 个负 dt（最小 -1462 ms，7 个在 tool-call 分片里），
+    /// 推测是多路分片合并时的时钟交错。分片时间不能倒流：照算会让思考耗时偏小、
+    /// 展开后的分片时间戳乱序。钳到 0 后，那一段只是"没有可测量的间隔"。
+    static func clampedDelta(_ delta: Int) -> Int {
+        max(0, delta)
     }
 }

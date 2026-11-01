@@ -97,4 +97,20 @@ final class AssistantStreamTests: XCTestCase {
         XCTAssertEqual(AssistantStream.duration(run), 3)
         XCTAssertEqual(AssistantStream.expand(run).map(\.time), [0, 1, 3])
     }
+
+    // MARK: - 负 dt
+
+    /// 实测 v4 里有 9 个负 dt（最小 -1462 ms）。照算会让耗时偏小。
+    func testNegativeDeltaDoesNotReduceDuration() {
+        let run = ChunkRun(index: 0, time0: 0, dt: [100, -1462, 50], texts: ["a", "b", "c", "d"])
+        XCTAssertEqual(AssistantStream.duration(run), 150)
+    }
+
+    /// 展开后的时间戳不能倒流，否则按时间排序的分片会乱序。
+    func testNegativeDeltaKeepsTimestampsMonotonic() {
+        let run = ChunkRun(index: 0, time0: 1000, dt: [100, -1462, 50], texts: ["a", "b", "c", "d"])
+        let times = AssistantStream.expand(run).map(\.time)
+        XCTAssertEqual(times, [1000, 1100, 1100, 1150])
+        XCTAssertEqual(times, times.sorted())
+    }
 }

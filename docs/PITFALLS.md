@@ -99,17 +99,33 @@ waterfall 仍然只有 2 条。
 
 测试：`SessionWindowTests.testLiveChunksSortBetweenDurableEvents`
 
-### 9. `surfaceOp.replace` 必须先删后插
+### 9. `surfaceOp.replace` 遮蔽的是模型上下文，不是对话记录
 
-语义是摘掉 `[startSeq, endSeq]` 闭区间里的旧记录，**再**插入新记录。
+**这一条最初写反了，按错的版本实现过。**
 
-**症状**：顺序颠倒的话，新记录被自己的删除区间吃掉（当它的 seq 落在区间内时），
-或者旧记录留下来变成重复——界面上是"同一条回复出现两次"或"显示旧版内容"。
-不报错。
+最初的理解：replace 是"摘掉 `[startSeq, endSeq]` 的旧记录、再插入新记录"，
+并为"先删后插"的顺序写了 3 个测试。
 
-实测 152 次，是"重写更早消息"路径的唯一机制。
+回放真实会话推翻了它：`compact-checkpoint` 的替换区间最宽跨 **1,298 个 seq**，
+照"先删后插"执行，压缩一次就把用户看过的整段历史从界面上抹掉。
 
-测试：`SessionWindowTests.testReplaceRemovesRangeThenInserts` 等 3 个
+正确语义来自 host 的 web 客户端（`dsh-client-ui-chat`，`isAppendSurfaceEvent` 的注释）：
+会话日志有两条平行视图——**surface**（模型上下文，replace 会遮蔽旧内容）和
+**transcript**（人看的对话记录，只由 append 事件构成，被遮蔽的内容照常显示）。
+replace 出来的副本"只给模型看"。
+
+**现在的实现**：`SessionWindow` 不删任何记录，`shadowed(startSeq:endSeq:)` 只回答
+"哪些被遮蔽了"。`SurfaceRole` 把每条事件分成 transcript / modelOnly /
+compactionCheckpoint / notSurface，只有前者和最后者进正文。
+
+实测 replace 的来源（全库）：`tool/result` 91、`user/message`(compact-checkpoint) 35、
+`system/message` 22、`user/message`(plugin) 6。只有这五种 surface 事件带 `surfaceOp`，
+而且是 100% 都带。
+
+**教训**：设计文档给的语义没核对 host 源码就写成了测试。测试全绿，但它锁定的是错的行为。
+
+测试：`SurfaceRoleTests`（13 个）、`ReplayTests.testReplaceNeverRemovesTranscriptEvents`
+（在真实夹具上验证正文事件集合不被 replace 改动）
 
 ### 10. 压缩流的 `dt` 比 `texts` 少一个元素
 
@@ -268,8 +284,8 @@ v3 和 v4 用 `startSeq`/`endSeq`。另外 `surfaceOp: "append"` 是字符串值
 v0/v3 里 `plugin` 的有 19 次。区间最大跨 **1,298 个 seq**，里面混着 tool/call、
 assistant/message 等各种事件。
 
-`SessionWindow.replace` 照字面执行会把整段历史删掉。这不是"重写一条消息"，
-而是压缩边界，装配器要单独处理。**尚未处理**。
+`SessionWindow.replace` 照字面执行会把整段历史删掉。**已解决**：replace 不再删除对话
+记录（见第 9 条），检查点识别为 `SurfaceRole.compactionCheckpoint`，带 `compactionId`。
 
 其余 replace 都是单个 seq 的同类型替换。一个 call 对应多个 result 时，
 第二个 result 一定带 replace（v0 5 次、v3 26 次、v4 84 次）。
@@ -292,7 +308,8 @@ shadowedSeqs 里。12 个文件出现孤儿 tool/result（共 33 个），它们
 ### 30. v4 里有负的 dt
 
 9 个，最小 -1462 ms，其中 7 个在 tool-call 分片里。`AssistantStream.duration`
-会把它们减掉，耗时偏小。**尚未处理**：应该按 0 计。
+会把它们减掉，耗时偏小。**已解决**：负 dt 钳到 0（`AssistantStream.clampedDelta`），
+耗时不再偏小，展开后的时间戳单调。
 
 ### 31. 落盘数据里没有小数 seq
 
