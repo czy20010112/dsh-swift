@@ -109,6 +109,10 @@ public enum EventPayload: Sendable, Equatable {
     case turnEnd(turn: Int, reason: String?)
     case stepStart(turn: Int, step: Int)
     case stepEnd(turn: Int, step: Int)
+    /// `agent/inbox/spliced`：对排队队列的一次 splice（不是"一条排队消息"）。
+    case inboxSplice(InboxSpliceEvent)
+    /// `llm/retry`：一次 LLM 调用失败、即将重试。
+    case llmRetry(LLMRetryEvent)
     /// 没有建模的类型。保留类型名——它可能被 surfaceOp 或 sourceEventSeqs 引用。
     case unknown(type: String)
 }
@@ -201,6 +205,28 @@ public struct ConversationMessage: Sendable, Equatable {
     /// 用来和 `compaction/start|summary|end` 关联。
     public var compactionId: String? = nil
     public var text: String
+}
+
+/// 排队队列的一次 splice。
+///
+/// 实测 4,585 次，字段分布：`target`/`start`/`inserted` 必有，`removedCount` 约半数缺失
+/// （缺失按 0）。插入的条目自带 `source.kind`，装配时同样要过用户行白名单。
+public struct InboxSpliceEvent: Sendable, Equatable {
+    public var target: String
+    public var start: Int
+    public var removedCount: Int
+    public var inserted: [ConversationMessage]
+}
+
+/// 一次 LLM 重试。实测 260 次。
+public struct LLMRetryEvent: Sendable, Equatable {
+    public var turn: Int?
+    public var step: Int?
+    public var attempt: Int
+    public var maxAttempts: Int
+    /// `TRANSPORT` / `RATE_LIMIT` / `TIMEOUT` / `SERVER` / `EMPTY_RESPONSE`
+    public var failureCode: String?
+    public var failureMessage: String?
 }
 
 /// 单条事件解码失败的记录。
@@ -376,6 +402,10 @@ extension SessionEvent: Decodable {
         case "step/end":
             let dto = try c.decode(StepDTO.self, forKey: .data)
             payload = .stepEnd(turn: dto.turn, step: dto.step)
+        case "agent/inbox/spliced":
+            payload = .inboxSplice(try c.decode(InboxSpliceDTO.self, forKey: .data).event)
+        case "llm/retry":
+            payload = .llmRetry(try c.decode(LLMRetryDTO.self, forKey: .data).event)
         default:
             // 不读 data：未知类型的结构不受我们控制，读它只会制造解码失败。
             payload = .unknown(type: type)
@@ -590,6 +620,45 @@ private struct MessageEnvelopeDTO: Decodable {
             sourceKind: body.source?.kind,
             compactionId: body.source?.compactionId,
             text: (body.content ?? []).compactMap { $0.type == "text" ? $0.text : nil }.joined()
+        )
+    }
+}
+
+private struct InboxSpliceDTO: Decodable {
+    var target: String
+    var start: Int
+    var removedCount: Int?
+    var inserted: [MessageEnvelopeDTO]?
+
+    var event: InboxSpliceEvent {
+        InboxSpliceEvent(
+            target: target,
+            start: start,
+            removedCount: removedCount ?? 0,
+            inserted: (inserted ?? []).map(\.message)
+        )
+    }
+}
+
+private struct LLMRetryDTO: Decodable {
+    struct Failure: Decodable {
+        var code: String?
+        var message: String?
+    }
+    var turn: Int?
+    var step: Int?
+    var retry: Int?
+    var maxRetries: Int?
+    var failure: Failure?
+
+    var event: LLMRetryEvent {
+        LLMRetryEvent(
+            turn: turn,
+            step: step,
+            attempt: retry ?? 1,
+            maxAttempts: maxRetries ?? retry ?? 1,
+            failureCode: failure?.code,
+            failureMessage: failure?.message
         )
     }
 }

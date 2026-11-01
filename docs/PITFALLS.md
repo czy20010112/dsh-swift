@@ -325,6 +325,20 @@ shadowedSeqs 里。12 个文件出现孤儿 tool/result（共 33 个），它们
 另一个教训：脱敏脚本本身在公开仓库里，**不能把"要过滤的私人标识"写成字面值**。
 现在它们从环境变量 `DSH_FIXTURE_PRIVATE_DOMAINS` / `DSH_FIXTURE_PRIVATE_TERMS` 读。
 
+### 33. `llm/retry-started` 是 `llm/retry` 的回声，不能出节点
+
+两者总是成对出现（实测 260 对 259），顺序是 `assistant/attempt → llm/retry →
+llm/retry-started → assistant/attempt → …`。
+
+**症状**：把 retry-started 也当节点，它会插在两次 retry 之间，"连续重试只留最新一条"
+的合并就失效。一份夹具里 1/5 到 5/5 的重试在正文里摆成了 10 行。
+
+### 34. 压缩生命周期的四个事件各出节点会留下一串噪音
+
+`compaction/start`、`summary`、`prune`、`end` 各出一行，一次压缩就在正文里
+留下四五行。压缩对用户只有一个意义："从这里往前的细节模型看不到了"，
+所以只在检查点位置放一个 `.compaction` 标记。
+
 ### 23. 不要在公开仓库里放内部文档
 
 评审稿和 UI 设计文档里有内网地址、工时估算、对私有仓库的逆向细节。

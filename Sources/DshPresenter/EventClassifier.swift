@@ -50,15 +50,19 @@ public enum EventClassifier {
         "assistant/message": .node,           // 40,924
         "agent/inbox/spliced": .node,         // 4,585 — 比真人发言还多
         "user/message": .node,                // 3,474 — 但只有 28.9% 会真的渲染
-        "compaction/start": .node,            // 319
-        "compaction/end": .node,              // 319
+        // 压缩生命周期由 compact-checkpoint 的 `.compaction` 标记代表（见 SurfaceRole）。
+        // start/end/prune/summary 各出一个节点的话，一次压缩会在正文里留下四五行。
+        "compaction/start": .structure,       // 319
+        "compaction/end": .structure,         // 319
         "system/message": .node,              // 281
         "llm/retry": .node,                   // 260 — 带失败原因，用户要知道为什么卡住
-        "llm/retry-started": .node,           // 259
+        // retry-started 只是 retry 的回声（总是紧跟在它后面，实测 259 对 260）。
+        // 当成节点会插在两次 retry 之间，打断"连续重试只留最新一条"的合并。
+        "llm/retry-started": .ignorable,      // 259
         "todo/write": .node,                  // 231
         "deliverables/presented": .node,      // 131
-        "compaction/prune": .node,            // 89
-        "compaction/summary": .node,          // 41
+        "compaction/prune": .structure,       // 89
+        "compaction/summary": .structure,     // 41
         "command/run": .node,                 // 42 — 斜杠命令
         "command/done": .node,                // 42
         "goal/change": .node,                 // 26

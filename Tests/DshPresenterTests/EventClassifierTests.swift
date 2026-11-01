@@ -59,17 +59,20 @@ final class EventClassifierTests: XCTestCase {
         }
     }
 
-    /// 压缩全链都要显示——上下文被压缩是用户需要知道的事。
-    func testCompactionChainProducesNodes() {
+    /// 压缩生命周期不各自出节点：一次压缩由检查点位置的 `.compaction` 标记代表。
+    /// 四个事件各出一行的话，正文里每次压缩都留下一串噪音。
+    func testCompactionLifecycleIsStructural() {
         for type in ["compaction/start", "compaction/end", "compaction/prune", "compaction/summary"] {
-            XCTAssertTrue(EventClassifier.producesNode(type))
+            XCTAssertEqual(EventClassifier.effect(of: type), .structure)
+            XCTAssertFalse(EventClassifier.producesNode(type))
         }
     }
 
     /// 重试必须显示：重试期间界面上什么都不动，用户分不清是卡住还是在等。
     func testRetryProducesNode() {
         XCTAssertTrue(EventClassifier.producesNode("llm/retry"))
-        XCTAssertTrue(EventClassifier.producesNode("llm/retry-started"))
+        // retry-started 是 retry 的回声，出节点会打断连续重试的合并
+        XCTAssertFalse(EventClassifier.producesNode("llm/retry-started"))
     }
 
     // MARK: - 会话头与元信息

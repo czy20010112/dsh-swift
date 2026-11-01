@@ -38,6 +38,19 @@ public enum ChatNode: Sendable, Equatable {
     /// 实测 4,585 次，**比真人发言(1,005)还多**，不是罕见事件。默认收起显示一行摘要。
     case inbox(InboxNode)
 
+    /// 上下文压缩的标记。
+    ///
+    /// 放在压缩检查点的位置，内容不显示（那是写给模型的摘要）。它告诉用户：
+    /// 从这里往前的细节模型已经看不到了——之后它"忘了"之前说过的话不是 bug。
+    /// 实测 35 个检查点，最宽遮蔽 1,298 个 seq。
+    case compaction(CompactionNode)
+
+    /// LLM 调用失败、正在重试。
+    ///
+    /// 重试期间界面上什么都不动，不显示的话用户分不清是卡住了还是在等。
+    /// 实测 260 次，`TRANSPORT` 这类错误常常连续重试好几轮。
+    case retry(RetryNotice)
+
     // 这里刻意**没有**"过程组"节点。设计文档把"连续工具折叠成一个过程区"
     // 当成必做项，但实测 39,847 个连续工具段里 81.3% 只有 1 个调用、
     // p99 是 3 个、最长 8 个——根本没有"一串工具"可折叠。
@@ -179,5 +192,12 @@ public struct UnknownNode: Sendable, Equatable {
     public init(seq: EventSeq, type: String) {
         self.seq = seq
         self.type = type
+    }
+}
+
+public struct CompactionNode: Sendable, Equatable {
+    public var seq: EventSeq
+    public init(seq: EventSeq) {
+        self.seq = seq
     }
 }
