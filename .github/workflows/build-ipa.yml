@@ -1,0 +1,97 @@
+name: Build IPA
+
+# 产出给越狱真机（iPhone 13 / iOS 15.3.1，AppSync 类安装机制）用的 IPA。
+# 没有 Apple 证书，所以整条链不走 provisioning：编译时关掉签名，打包前做一次 ad-hoc 签名。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支的新推送取代还在跑的旧构建，macOS runner 排队贵。
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 选 Xcode
+        run: |
+          ls -d /Applications/Xcode* || true
+          # 按已在真机验证过的顺序挑，取第一个存在的。
+          # 不写死单个版本：runner 镜像会下架旧版本，写死的那一版消失后 xcode-select 只报错，
+          # 用 `||` 兜底的话还会悄悄落到默认 Xcode 上。
+          for v in 16.4 16.2 16.1 16.0 15.4; do
+            if [ -d "/Applications/Xcode_$v.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_$v.app"
+              break
+            fi
+          done
+          xcodebuild -version
+
+      - name: 生成工程
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -list -project DshApp.xcodeproj
+
+      - name: 编译 DshApp（Release）
+        run: |
+          set -o pipefail
+          xcodebuild -project DshApp.xcodeproj \
+            -scheme DshApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tail -60
+
+      - name: 打包 IPA
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release-iphoneos/DshApp.app"
+          if [ ! -d "$APP" ]; then
+            echo "::error::找不到 $APP"
+            find build -name "*.app" -type d || true
+            exit 1
+          fi
+
+          # 防静默失败：确认可执行文件存在且是 arm64。
+          lipo -info "$APP/DshApp"
+          lipo -info "$APP/DshApp" | grep -q arm64
+
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+
+          # ad-hoc 签名（无证书，`-` 身份）。CODE_SIGNING_ALLOWED=NO 时只有链接器给主二进制
+          # 打的 linker-signed 签名，Info.plist 和资源没有被封存（没有 _CodeSignature）。
+          # 参考流水线在真机上验证通过的是 ad-hoc 签名过的包，这里保持同一形态，
+          # 不赌"完全未签"在 AppSync 上也行。
+          # 不带 entitlements：这个占位 App 不用 App Group / iCloud 等能力，
+          # 依赖的三个库都是静态链接，包里没有需要单独签的 framework。
+          codesign --force --sign - --timestamp=none "Payload/DshApp.app"
+          codesign --verify --deep --strict "Payload/DshApp.app"
+          codesign -dv "Payload/DshApp.app" 2>&1 | grep -E "Identifier|Signature|TeamIdentifier"
+
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          OUT="dsh-swift-${SHORT_SHA}-unsigned.ipa"
+          zip -q -r9 "$OUT" Payload
+          ls -lh "$OUT"
+          echo "IPA=$OUT" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-swift-ipa
+          path: ${{ env.IPA }}
+          retention-days: 14
+          if-no-files-found: error

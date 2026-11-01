@@ -4,3 +4,7 @@
 *.xcworkspace
 DerivedData/
 .DS_Store
+# App 构建产物（xcodegen + xcodebuild -derivedDataPath build）
+/build/
+/Payload/
+*.ipa
