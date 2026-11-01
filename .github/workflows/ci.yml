@@ -47,9 +47,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: 选 Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.app || sudo xcode-select -s /Applications/Xcode_15.4.app
-      - name: 为 iOS 构建三个核心模块
+        # 原来写的是 `xcode-select -s Xcode_16.app || ... Xcode_15.4.app`。macos-14 上没有
+        # `Xcode_16.app` 这个名字，前半句报错被 `||` 接住，job 一直悄悄用 15.4 跑。
+        # 改成按存在与否挑，并把选中的版本打出来（见 PITFALLS 第 35 条）。
         run: |
+          for v in 16.4 16.2 16.1 16.0 15.4; do
+            if [ -d "/Applications/Xcode_$v.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_$v.app"
+              break
+            fi
+          done
+          xcodebuild -version
+      - name: 为 iOS 构建三个核心模块
+        # 没有 pipefail 时管道的退出码来自 tail，编译失败这一步照样是绿的
+        # （见 PITFALLS 第 36 条）。
+        run: |
+          set -o pipefail
           xcodebuild build \
             -scheme dsh-swift-Package \
             -destination 'generic/platform=iOS' \

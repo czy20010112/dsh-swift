@@ -150,6 +150,14 @@ public struct ToolAssembler: Sendable {
         return Self.truncate(keys.joined(separator: ", "), to: limit)
     }
 
+    /// 按节点取参数摘要。渲染层手里只有 `ToolNode`，不该自己去拼 `Call`。
+    public func argumentSummary(for node: ToolNode, limit: Int = 160) -> String {
+        argumentSummary(
+            for: Call(seq: node.seq, callId: "", name: node.name, arguments: node.arguments),
+            limit: limit
+        )
+    }
+
     /// 把 JSON 值转成一行可读文本。
     static func stringify(_ value: Any) -> String? {
         switch value {

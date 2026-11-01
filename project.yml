@@ -24,6 +24,10 @@ targets:
     platform: iOS
     sources:
       - path: App/Sources
+      # 样例会话：一份脱敏后的真实会话，和 Tests/Fixtures/v4-01.json 同一份。
+      # 让渲染层在没有 host 时也能在真机上验收。
+      - path: App/Resources
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.dshswift.app

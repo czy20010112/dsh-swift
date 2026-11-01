@@ -233,4 +233,16 @@ final class TranscriptReplayTests: XCTestCase {
         case .unknown: return "unknown"
         }
     }
+
+    // MARK: - App 内样例
+
+    /// App 包里打的样例会话必须和夹具是同一份。两份副本一旦漂移，
+    /// 真机上验收的就不是测试里验证过的那份数据了。
+    /// 重新导出夹具后要同步：`cp Tests/Fixtures/v4-01.json App/Resources/sample-session.json`
+    func testAppSampleMatchesFixture() throws {
+        let root = Self.fixturesDir.deletingLastPathComponent().deletingLastPathComponent()
+        let app = try Data(contentsOf: root.appendingPathComponent("App/Resources/sample-session.json"))
+        let fixture = try Data(contentsOf: Self.fixturesDir.appendingPathComponent("v4-01.json"))
+        XCTAssertEqual(app, fixture, "App/Resources/sample-session.json 与 Tests/Fixtures/v4-01.json 不一致")
+    }
 }
