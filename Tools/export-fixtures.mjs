@@ -127,10 +127,6 @@ function toolResultCallId(event) {
   return m.toolCallId ?? m.source?.callId ?? m.content?.find?.((c) => c?.type === 'tool-result')?.toolCallId
 }
 
-function seqOf(event) {
-  return event.seq ?? event.seq0
-}
-
 // 会话特征：除了事件类型，还把我们关心的格式变体当成覆盖目标，
 // 否则贪心挑选可能刚好避开这些最容易出错的样本。
 function featuresOf(gen, events) {
@@ -163,9 +159,20 @@ function featuresOf(gen, events) {
 
 // 规则顺序有讲究：先处理路径和域名（结构化的大块），再处理用户名这类会出现在
 // 路径/域名内部的片段，最后才是兜底的长 token。顺序反了会留下半截路径。
+// 私人标识（真名拼音、私有域名、VPS 地址等）**不写进这个文件**——它在公开仓库里，
+// 把"要过滤什么"写成字面值，本身就是泄露。从环境变量读，逗号分隔：
+//   DSH_FIXTURE_PRIVATE_DOMAINS   私有域名，如 a.example,b.example
+//   DSH_FIXTURE_PRIVATE_TERMS     其余要整词替换的片段（真名、账号名……）
+// OS 用户名、主机名、git 身份另由 localIdentities() 动态取。
+function envList(name) {
+  return (process.env[name] ?? '').split(',').map((s) => s.trim()).filter((s) => s.length >= 3)
+}
+const PRIVATE_DOMAINS = envList('DSH_FIXTURE_PRIVATE_DOMAINS')
+const PRIVATE_TERMS = envList('DSH_FIXTURE_PRIVATE_TERMS')
+
 const SCRUBBERS = [
   // 私有域名必须在通用 URL 规则之前，否则只会改掉带 scheme 的那部分。
-  [/[A-Za-z0-9.-]*user/gi, 'example.internal'],
+  ...PRIVATE_DOMAINS.map((d) => [new RegExp(`[A-Za-z0-9.-]*${escapeRegExp(d)}`, 'gi'), 'example.internal']),
   // 整条 URL 都换掉：路径和 query 里同样可能有用户名、签名参数。
   [/\b(?:https?|wss?|ftp|smb):\/\/[^\s"'`<>)\]]+/gi, 'https://example.com'],
   // Windows 绝对路径，含 JSON 字符串里被转义成 \\ 的形式（tool/call 的 arguments 就是 JSON 字符串）。
@@ -193,9 +200,8 @@ const SCRUBBERS = [
     '$1[redacted]',
   ],
   [/((?:密码|口令|令牌|密钥|验证码)\s*[:：=是为]?\s*)\S+/g, '$1[redacted]'],
-  // 用户名、主机名、真名拼音、GitHub 账号。任何含 czy 的词都整体替换。
-  [/[A-Za-z0-9._-]*czy[A-Za-z0-9._-]*/gi, 'user'],
-  [/[A-Za-z0-9._-]*user[A-Za-z0-9._-]*/gi, 'user'],
+  // 真名、账号名这类私人片段：含它的整个词都替换掉。来源见文件顶部的环境变量说明。
+  ...PRIVATE_TERMS.map((t) => [new RegExp(`[A-Za-z0-9._-]*${escapeRegExp(t)}[A-Za-z0-9._-]*`, 'gi'), 'user']),
   // 本机身份（OS 用户名、主机名、git 身份）动态取，换一台机器跑也不会漏。
   ...localIdentities().map((id) => [new RegExp(`[A-Za-z0-9._-]*${escapeRegExp(id)}[A-Za-z0-9._-]*`, 'gi'), 'user']),
   // 兜底：长串高熵 token（base64/hex）。不含 '-'，避免误杀 UUID 和 callId。
@@ -256,6 +262,37 @@ function truncateBytes(s, limit) {
   return { value: chars.slice(0, lo).join('') + TRUNCATED_MARK, cut: true }
 }
 
+// 跨分片脱敏。流式分片会把一个 IP 或路径切成两半（实测一个公网 IP 被切成 "a.b.c" + ".d"），
+// 逐片匹配永远认不出来。所以在整条 run 拼接后的文本上匹配，再把替换串整体放进
+// 匹配起点所在的分片、从其余分片里删掉被匹配的字符——分片个数不变，dt 关系保持成立。
+// 必须在截断分片数之前做，否则保留的最后一片里会留下半截敏感串。
+function scrubPieces(pieces) {
+  let ps = pieces
+  for (const [re, rep] of SCRUBBERS) {
+    const joined = ps.join('')
+    re.lastIndex = 0
+    if (!re.test(joined)) continue
+    re.lastIndex = 0
+    const owner = new Int32Array(joined.length)
+    let at = 0
+    ps.forEach((p, i) => {
+      owner.fill(i, at, at + p.length)
+      at += p.length
+    })
+    const out = ps.map(() => '')
+    let cursor = 0
+    for (const m of joined.matchAll(re)) {
+      for (let j = cursor; j < m.index; j++) out[owner[j]] += joined[j]
+      const replacement = joined.slice(m.index, m.index + m[0].length).replace(new RegExp(re.source, re.flags.replace('g', '')), rep)
+      if (m[0].length > 0) out[owner[m.index]] += replacement
+      cursor = m.index + m[0].length
+    }
+    for (let j = cursor; j < joined.length; j++) out[owner[j]] += joined[j]
+    ps = out
+  }
+  return ps
+}
+
 // 递归脱敏。stringLimit/arrayLimit 可调，用于把超大事件逐级压小。
 function sanitizeValue(v, opts, ctx) {
   if (typeof v === 'string') {
@@ -280,7 +317,7 @@ function sanitizeValue(v, opts, ctx) {
 // run 的 texts 和 dt 必须**成对**截断（保留前 n 个分片和前 n-1 个 dt），
 // 否则夹具本身就违反了 dt.count == texts.count - 1，测试会误报。
 function sanitizeRun(run, opts, ctx) {
-  const pieces = runPieces(run)
+  const pieces = scrubPieces(runPieces(run).map(String))
   const key = Array.isArray(run.texts) ? 'texts' : 'args'
   const out = {}
   for (const [k, x] of Object.entries(run)) {
@@ -288,7 +325,11 @@ function sanitizeRun(run, opts, ctx) {
     out[k] = sanitizeValue(x, opts, ctx)
   }
   const n = Math.min(pieces.length, opts.runLimit)
-  out[key] = pieces.slice(0, n).map((x) => sanitizeValue(x, opts, ctx))
+  out[key] = pieces.slice(0, n).map((x) => {
+    const r = truncateBytes(x, opts.stringLimit)
+    if (r.cut) ctx.truncated = true
+    return r.value
+  })
   out.dt = Array.isArray(run.dt) ? run.dt.slice(0, Math.max(0, n - 1)) : run.dt
   if (n < pieces.length) {
     ctx.truncated = true
@@ -336,8 +377,8 @@ function sanitizeHeader(header, alias) {
 
 // 导出后的自检。任何一条命中都视为脱敏失败——宁可导不出来，也不能把隐私推上公开仓库。
 const DENYLIST = [
-  [/czy/i, '用户名/域名片段 czy'],
-  [/user/i, '真名拼音'],
+  ...PRIVATE_DOMAINS.map((d) => [new RegExp(escapeRegExp(d), 'i'), '私有域名']),
+  ...PRIVATE_TERMS.map((t) => [new RegExp(escapeRegExp(t), 'i'), '私人片段']),
   [/\b192\.168\.\d/, '内网 IP 192.168.*'],
   [/\b172\.(?:1[6-9]|2\d|3[01])\.\d/, '内网 IP 172.16-31.*'],
   [/\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/, '内网 IP 10.*'],
@@ -346,7 +387,18 @@ const DENYLIST = [
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\./, 'JWT'],
   [/[\w.+-]+@(?!example\.com)[A-Za-z0-9-]+\.[A-Za-z]{2,}/, '邮箱'],
   [/\/(?:home|Users)\/(?!user\b)[A-Za-z0-9_-]+/, '主目录路径'],
+  [/(?<![\w.~:/-])\/(?:mnt|[a-z])\/[A-Za-z]/, 'MSYS/WSL 路径'],
+  [/\b(?!127\.0\.0\.1\b)(?!0\.0\.0\.0\b)(?!203\.0\.113\.1\b)(?:\d{1,3}\.){3}\d{1,3}\b/, '未替换的 IPv4'],
+  ...localIdentities().map((id) => [new RegExp(escapeRegExp(id), 'i'), '本机身份']),
 ]
+
+// 除了文件原文，还要检查每条 run 拼接后的文本：敏感串被切在两个分片里时，
+// 原文 grep 是看不到的。
+function runJoinedTexts(events) {
+  const out = []
+  for (const e of events) for (const r of runsOf(e)) out.push(runPieces(r)?.join('') ?? '')
+  return out.join('\n')
+}
 
 function selfCheck(text) {
   const hits = []
@@ -480,7 +532,7 @@ const manifest = {
   generatedBy: 'Tools/export-fixtures.mjs',
   redaction:
     '路径→/workspace/<basename>；URL→https://example.com；IP→203.0.113.1（保留 127.0.0.1）；' +
-    '邮箱→user@example.com；含 czy 的词→user；key/token/password→[redacted]；' +
+    '邮箱→user@example.com；本机用户名/主机名/git 身份→user；私有域名→example.internal；key/token/password→[redacted]；' +
     `字符串截断到 ${STRING_LIMIT} 字节并以 "${TRUNCATED_MARK}" 结尾；run 分片截断后在 original 里记原始计数`,
   fixtures: [],
 }
@@ -515,7 +567,7 @@ for (const c of picked) {
     kept.map((e) => '    ' + JSON.stringify(e)).join(',\n') +
     '\n  ]\n}\n'
 
-  const hits = selfCheck(text)
+  const hits = selfCheck(text + '\n' + runJoinedTexts(kept))
   if (hits.length) failures.push(`${name}: 脱敏自检命中\n    ${hits.join('\n    ')}`)
   const bytes = Buffer.byteLength(text)
   if (bytes > FILE_HARD_LIMIT) failures.push(`${name}: ${bytes} 字节超过单文件上限 ${FILE_HARD_LIMIT}`)
@@ -551,6 +603,8 @@ const manifestText = JSON.stringify(
   null,
   2,
 ) + '\n'
+const manifestHits = selfCheck(manifestText)
+if (manifestHits.length) failures.push(`manifest: 脱敏自检命中\n    ${manifestHits.join('\n    ')}`)
 writeFileSync(join(outDir, 'manifest.json'), manifestText)
 totalBytes += Buffer.byteLength(manifestText)
 if (totalBytes > TOTAL_LIMIT) failures.push(`夹具总大小 ${totalBytes} 超过 ${TOTAL_LIMIT}`)
