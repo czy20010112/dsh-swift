@@ -10,15 +10,26 @@ DeepSeek Harness 的原生 iOS 客户端。手机连上一台跑着 `dsh web` �
 
 ## 这个仓库现在有什么
 
+**能做的事**：装到 iPhone 上，打开 App，看到一份打包好的真实会话被完整渲染成对话——
+用户发言、可展开的思考行、工具卡（大结果走全文页）、待办、重试、斜杠命令、压缩标记、
+交付物，以及带行内格式的正文。**它还是离线回放，连不上真 host**：配对、mux、
+`session.follow`、`$events` 订阅都还没接。
+
 | 模块 | 层 | 状态 |
 |---|---|---|
-| `DshProtocol` | L1 传输：配对换发、线协议常量、RPC 信封、mux 帧、`$events` | 配对与常量镜像已落地，19 个测试绿 |
-| `DshSession` | L2 会话窗口：seq 排序、surface/transcript 分离、live chunk 退役、三代格式解码 | 已落地，含真实会话回放 |
-| `DshPresenter` | L3 装配：事件 → `ChatNode` | 节点模型已定，装配器待写 |
+| `DshProtocol` | L1 传输：配对换发、线协议常量、SHA-256/base64url、`$events` 待决交互状态机 | 27 个测试 |
+| `DshSession` | L2 会话窗口：seq 排序、surface/transcript 分离、压缩流展开、三代格式解码 | 50 个测试 |
+| `DshPresenter` | L3 装配：事件 → `ChatNode`，含端到端装配与真实会话回放 | 164 个测试 |
+| `App/` | 渲染层与外壳（不在 SwiftPM 包内，只在 iOS 上编译） | 已真机验收，无自动化测试 |
 
-渲染层（`DshRender` / `DshShell`）还没开始，而且**刻意不放进这个 SwiftPM 包** —— 见下。
+共 **241 个测试**。
 
-**拿 IPA**：每次推到 main，`Build IPA` workflow 会产出 `dsh-swift-<short-sha>-unsigned.ipa`（Actions 页面该次运行的 Artifacts，保留 14 天；或 `gh run download <run-id> -n dsh-swift-ipa`）。包已做 ad-hoc 签名，面向装了 AppSync 一类机制的越狱设备。
+**拿 IPA**：每次推到 main，`Build IPA` workflow 产出 `dsh-swift-<short-sha>-unsigned.ipa`
+（Actions 页面该次运行的 Artifacts，artifact 名 `dsh-swift-ipa`，保留 14 天；
+或 `gh run download <run-id> -n dsh-swift-ipa`）。包已做 ad-hoc 签名，面向装了
+AppSync 一类机制的越狱设备。
+
+**当前进度、已知缺口和卡点**在 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
 
 ---
 
@@ -28,14 +39,14 @@ DeepSeek Harness 的原生 iOS 客户端。手机连上一台跑着 `dsh web` �
 
 ```
 $ swift test
-Executed 19 tests, with 0 failures
+Executed 241 tests, with 0 failures
 ```
 
 协议层、窗口层、装配器都是纯逻辑，没有理由依赖 UIKit。守住这条边界，迭代就不必
 每次等 macOS runner 排队；破掉它，开发速度立刻掉一档。CI 的 `test-linux` job 就是
 这条边界的守卫。
 
-渲染层将来作为独立的 Xcode target 存在，依赖这三个模块，但不反向污染它们。
+渲染层放在 `App/`，作为独立的 Xcode target 存在，依赖这三个模块，但不反向污染它们。
 
 ---
 
@@ -133,18 +144,28 @@ host 有两条换发凭证的路，长得很像，但给的东西不一样：
 
 ---
 
+## 真机验收
+
+2026-11-01，iPhone 13 / iOS 15.3.1（越狱，AppSync 安装）。首页显示四个库的常量
+（转发事件 28 / 需答复 2 / surface 类型 5 / 已建模事件 41），进入样例会话后节点全部
+渲染正确、展开与滚动正常。**这次验收的是渲染层，不是端到端连 host。**
+细节与缺口见 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
+
+---
+
 ## 开发计划
 
 远程档先行，iSH 内核在后。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| **P0** | 配对：`/connect` 换发、403/401/409 分治、Keychain、两级重连 | 进行中 |
-| **P1a** | mux 流、`session.follow`、dense index、rebaseline、压缩流展开 | |
-| **P1b** | 装配器：思考块 → 工具 → 正文 → 用户行 → inbox → 分组 | |
-| **P1c** | `$events` 与待决交互：审批/提问、多客户端竞争 | |
-| **P1d** | 壳层：侧栏、会话列表、设置 | |
-| **P2** | iSH 内核：exec.c 的 node flags、三道硬门、overlay | |
+| **P0** | 配对：`/connect` 换发、403/401/409 分治、Keychain、两级重连 | 协议逻辑完成，传输/存储/UI 未接 |
+| **P1a** | mux 流、`session.follow`、dense index、rebaseline | 解码与压缩流展开完成，流未接 |
+| **P1b** | 装配器 | ✅ 完成 |
+| **P1c** | `$events` 与待决交互 | 状态机完成，订阅未接 |
+| **P1d** | 壳层：侧栏、会话列表、设置 | 未开始 |
+| **P1e** | 渲染层 | ✅ 第一版完成并真机验收 |
+| **P2** | iSH 内核：node flags、三道硬门、AOT | 未开始，范围已重估 |
 
 鉴权按"够用就行"处理：局域网手填/扫码 token。跨网络访问交给 Tailscale 或使用者
 自己的反向代理（配合 WebAuthn 一类的网关），**App 侧不自己做 NAT 打洞或中继** ——

@@ -257,6 +257,18 @@ pin 在 `3f6384c7`（2026-08-23 / v2.0.0-95），origin/master 已到
 
 **判据**：`cd deps/ish && git log --oneline -1 && git describe --tags`
 
+### 23. 不要在公开仓库里放内部文档
+
+评审稿和 UI 设计文档里有内网地址、工时估算、对私有仓库的逆向细节。
+这些留在私有工作区，公开仓库的 README 只引结论。
+
+测试用例里也会漏——第一版把开发机的真实内网地址和私人域名写进了 cookie 名的金标，
+后来换成 RFC 5737 的文档地址（`192.0.2.10`）和 `dsh.example.com`，金标重算。
+
+**判据**：提交前 grep 一遍内网段、用户名、真实域名。
+
+---
+
 ## 回放真实会话发现的（15 个夹具 / 覆盖全部 53 种事件）
 
 ### 24. 会话格式有三代，不是两代
@@ -339,18 +351,6 @@ llm/retry-started → assistant/attempt → …`。
 留下四五行。压缩对用户只有一个意义："从这里往前的细节模型看不到了"，
 所以只在检查点位置放一个 `.compaction` 标记。
 
-### 23. 不要在公开仓库里放内部文档
-
-评审稿和 UI 设计文档里有内网地址、工时估算、对私有仓库的逆向细节。
-这些留在私有工作区，公开仓库的 README 只引结论。
-
-测试用例里也会漏——第一版把开发机的真实内网地址和私人域名写进了 cookie 名的金标，
-后来换成 RFC 5737 的文档地址（`192.0.2.10`）和 `dsh.example.com`，金标重算。
-
-**判据**：提交前 grep 一遍内网段、用户名、真实域名。
-
----
-
 ## 构建与打包（App 外壳 / IPA 流水线）
 
 ### 35. `xcode-select A || xcode-select B` 会悄悄落到 B 上
@@ -376,3 +376,45 @@ macos-14 镜像上**没有** `Xcode_16.app` 这个名字（只有 `Xcode_16.2.ap
 
 **判据**：凡是 `xcodebuild | tail`、`| xcpretty` 的步骤，要么 `set -o pipefail`，
 要么显式写 `shell: bash`（这时默认带 `-eo pipefail`）。
+
+---
+
+## 真机验收发现的
+
+### 37. 夹具把长字符串截断到 2 KB，会让 arguments 变成非法 JSON
+
+导出时为了控制体积把长字符串截到 2 KB 并标 `…[truncated]`。这会让一次 `tool/call`
+的 `arguments` 从合法 JSON 变成残缺前缀，`ToolAssembler.parseArguments` 解析失败，
+卡片降到 `.raw` 档——真机上看到的是整坨 `{"command":"$env:HTTPS_PROXY=…`。
+
+**判据**：真会话 47,955 次调用里**零个非法 JSON**，所以这是夹具产物，不是真实数据问题。
+
+**但它暴露了一个真实的 UX 缺口**：`.raw` 档现在原样显示 arguments 字符串。
+更好的做法是退一步用正则从残缺 JSON 里捞 `description` / `command`，捞不到再显示原文。
+**尚未修**（记在 PROGRESS 的缺口 10）。
+
+### 38. 节点类型定义了但没人产出，界面上什么也不少
+
+`ChatNode.turnTail` 和 `ChatNode.inbox` 都有定义、`InboxQueue` 也把 splice 重放好了，
+但装配器**从不产出这两种节点**（`grep "turnTail"` 只命中 case 定义；`grep "inbox.nodes"` 零命中）。
+编译通过、241 个测试全绿、真机渲染看起来完全正常——因为"某类信息没显示"和
+"这类信息不存在"在界面上长得一样。
+
+**症状**：token 用量、耗时、排队中的输入永远不出现，而且没有任何报错或缺失感。
+
+**判据**：每次新增节点类型，同时加一条"某份夹具确实产出了它"的断言：
+
+```swift
+XCTAssertGreaterThan(nodes.filter { if case .turnTail = $0 { return true }; return false }.count, 0)
+```
+
+这类检查比"渲染正常"有用得多，因为渲染正常是默认状态。
+
+### 39. 真机验收必须先解锁，而 ios-mcp 没有解锁工具
+
+`locked=true` 时 `install_app` / `tap_screen` / `run_command` 全部被服务端拦截，
+只允许读屏类工具。`wake_and_home` 能唤到解锁提示但不能输密码——
+`attemptUnlockWithPasscode:` 在源码里存在，但没有暴露成 MCP 工具。
+
+**处置**：验收流程第一步固定为 `get_screen_info` → 若 locked 则 `wake_and_home` →
+再查一次；仍 locked 就停下来让人解锁，不要反复试交互类工具。

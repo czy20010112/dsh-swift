@@ -230,7 +230,7 @@ agent 的实际节奏是"说一句 → 调一个工具 → 再说一句"，不�
 
 ---
 
-## 14. surfaceOp.replace 不删除对话记录
+## 13. surfaceOp.replace 不删除对话记录
 
 **原决定（已推翻）**：replace 是"摘掉 `[startSeq, endSeq]` 的旧记录，再插入新记录"，
 窗口照此删除。
@@ -252,7 +252,7 @@ replace 只作用于 surface；transcript 只由 append 事件构成，被遮蔽
 
 ---
 
-## 13. 不在 App 里做 NAT 打洞或中继
+## 14. 不在 App 里做 NAT 打洞或中继
 
 **决定**：App 只支持 (a) 局域网直连 + 手填/扫码 baseUrl，(b) 任意 baseUrl（含反代/
 tailnet 地址）。跨网络的可达性交给 Tailscale 或使用者自己的网关。
@@ -263,3 +263,35 @@ tailnet 地址）。跨网络的可达性交给 Tailscale 或使用者自己的�
 **鉴权的现实**：真 dsh 只有一个进程级 launch token（拿到即 owner、30 天、
 无法单设备撤销、无轮换）。局域网自用够了；要上公网应该在 dsh 前面放一个
 做真配对与撤销的网关，对 dsh 仍用 loopback + launch token。
+
+---
+
+## 15. 渲染层只画，判断全在 presenter
+
+**决定**：`App/Sources/NodeViews.swift` 里的视图不做任何判断——摘要怎么截、结果要不要
+进全文页、哪个来源算真人发言，全部调 `DshPresenter` 的现成方法；`ToolNode` 的摘要
+由一个新增的 `ToolAssembler.argumentSummary(for: ToolNode)` 重载提供。
+
+**为什么**：视图代码只在本机没有的 Mac 上编译，写完一次要等一轮 CI 才知道对不对，
+更不可能给它写测试。把这些规则留在 presenter 里，它们就有测试、能在 Windows 上秒级
+迭代；视图退化成"把字段摆到屏幕上"，出错的面积被压到最小。
+
+**代价**：presenter 要为视图暴露几个便利重载（比如按节点取参数摘要）。这点接口成本
+远小于把规则复制进视图。
+
+---
+
+## 16. 用一份真实会话做离线验收
+
+**决定**：把一份脱敏的真实会话打包进 App（`App/Resources/sample-session.json`），
+首页可以打开它走完整装配链并渲染。真机验收先验这个。
+
+**为什么**：拿到真数据之前，渲染层需要一条能反复验证的通路。脱敏夹具正好是"格式真、
+内容假"的东西：它能覆盖 v0/v3/v4 三代格式、压缩标记、重试、命令、交付物、待办，
+却不需要 host、不需要配对、不需要网络。
+
+**代价**：多一份数据副本。用测试钉住——`TranscriptReplayTests.testAppSampleMatchesFixture`
+断言 App 里那份和 `Tests/Fixtures/v4-01.json` 逐字节一致，重新导出夹具后不同步就会红。
+
+**边界**：它证明的是渲染层，不证明协议。配对、mux、follow、`$events` 接上之前，
+"能渲染"和"能连"是两件事，文档里要分开写，否则容易误以为已经跑通了。
