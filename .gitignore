@@ -8,3 +8,6 @@ DerivedData/
 /build/
 /Payload/
 *.ipa
+
+# 私有补充资料（设计评审、数据分析脚本、参考文档），永不推送
+_local/
