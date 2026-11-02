@@ -177,7 +177,8 @@ CI 三个 job 全通：`test-linux` / `wire-drift` / `build-ios`；另有独立�
 - `Tests/Fixtures/`：15 个夹具（v4 8 / v0 4 / v3 3），1.6 MB，覆盖全部 53 种事件类型。
 - `Sources/DshSession/EventDecoder.swift`：三代格式都能解，未知类型降级 `.unknown`，坏行收集不抛错。
 - `Tests/DshSessionTests/ReplayTests.swift`：13 个回放测试，解码 0 失败。
-- `Tests/DshPresenterTests/TranscriptReplayTests.swift`：12 个端到端回放测试 + App 样例一致性。
+- `Tests/DshPresenterTests/TranscriptReplayTests.swift`：12 个（11 个端到端回放断言 + 1 个
+  App 样例与夹具一致性）。
 
 ---
 
